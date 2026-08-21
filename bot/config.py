@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -61,12 +62,35 @@ class Settings(BaseSettings):
     @classmethod
     def validate_database_url(cls, value: str) -> str:
         if value.startswith("postgres://"):
-            return "postgresql+asyncpg://" + value.removeprefix("postgres://")
-        if value.startswith("postgresql://"):
-            return "postgresql+asyncpg://" + value.removeprefix("postgresql://")
-        if value.startswith("sqlite:///") and not value.startswith("sqlite+aiosqlite:///"):
+            value = "postgresql+asyncpg://" + value.removeprefix("postgres://")
+        elif value.startswith("postgresql://"):
+            value = "postgresql+asyncpg://" + value.removeprefix("postgresql://")
+        if value.startswith("postgresql+asyncpg://"):
+            # Render commonly supplies libpq's `sslmode=require` query
+            # parameter. asyncpg rejects that keyword and expects `ssl`.
+            # Translate it at the configuration boundary so the rest of the
+            # database layer can use one consistent async URL.
+            parts = urlsplit(value)
+            query_pairs = parse_qsl(parts.query, keep_blank_values=True)
+            sslmode: str | None = None
+            normalized_pairs: list[tuple[str, str]] = []
+            has_ssl = False
+            for key, item in query_pairs:
+                if key == "sslmode":
+                    sslmode = item
+                    continue
+                if key == "ssl":
+                    has_ssl = True
+                normalized_pairs.append((key, item))
+            if sslmode and not has_ssl:
+                # Render uses `require`; preserve other libpq modes as the
+                # closest asyncpg string value when they are supplied.
+                normalized_pairs.append(("ssl", sslmode))
+            value = urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(normalized_pairs), parts.fragment))
+            return value
+        if value.startswith("sqlite:///" ) and not value.startswith("sqlite+aiosqlite:///" ):
             return "sqlite+aiosqlite:///" + value.removeprefix("sqlite:///")
-        if not (value.startswith("postgresql+asyncpg://") or value.startswith("sqlite+aiosqlite://")):
+        if not value.startswith("sqlite+aiosqlite://"):
             raise ValueError("DATABASE_URL must be a PostgreSQL or SQLite SQLAlchemy async URL")
         return value
 
