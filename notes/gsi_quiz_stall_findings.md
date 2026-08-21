@@ -1,1 +1,7 @@
+# GSI Quiz stall findings
 
+The active GSI quiz was `Master45` (official quiz id 3), configured for play group `-1003799884627`, with 2 admin-supplied questions and 2 participants. It was found running with question 1 and an expired round timestamp while the scheduler was busy processing regular automatic quiz deliveries and AI provider retries. The runtime log showed repeated regular `send_quiz`/AI generation attempts during the official round window, but no timely official round transition.
+
+The scheduler currently awaited `asyncio.gather` for due regular group quizzes before calling `_tick_official_quizzes`, so slow AI generation could delay official round advancement. In addition, `_tick_official_quizzes` collected expired tests and processed round advancement before finalization; a delayed quiz could be advanced and then immediately finalized from the same stale expiration snapshot. Official `send_next_round` did not extend `ends_at` after a delayed round, so a resumed question could be finalized immediately on the next tick.
+
+During recovery, the scheduler eventually advanced the stalled quiz to question 2 and sent the halfway status, final result photo, real WebM sticker, and MP4 animation successfully. The quiz is now completed. The code fix should prioritize official ticking concurrently/early, skip same-tick finalization for quizzes that advanced, and extend the official quiz deadline to at least the current round end plus a grace period when sending a delayed round.
