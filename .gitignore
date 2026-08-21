@@ -1,0 +1,10 @@
+.env
+.env.*
+!.env.example
+source_storage/
+runtime_test.db
+runtime_test.log
+runtime_test.pid
+__pycache__/
+.pytest_cache/
+*.pyc

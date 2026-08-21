@@ -1,0 +1,76 @@
+services:
+  - type: worker
+    name: gsi-study-mcq-bot
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: starter
+    autoDeployTrigger: commit
+    maxShutdownDelaySeconds: 120
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: gsi-study-mcq-db
+          property: connectionString
+      - key: BOT_TOKEN
+        sync: false
+      - key: AI_API_KEY
+        sync: false
+      - key: AI_BASE_URL
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: MISTRAL_API_KEY
+        sync: false
+      - key: NEWS_API_KEY
+        sync: false
+      - key: ADMIN_USER_IDS
+        sync: false
+      - key: SOURCE_GROUP_ID
+        value: "-1004342424852"
+      - key: BULK_SOURCE_GROUP_ID
+        value: "-1003974533700"
+      - key: OFFICIAL_QUIZ_CONFIG_GROUP_ID
+        value: "-1003511361627"
+      - key: OFFICIAL_QUIZ_PLAY_GROUP_ID
+        value: "-1003799884627"
+      - key: SUPPORT_CHANNEL_URL
+        value: https://t.me/GSI_QUIZ
+      - key: SUPPORT_GROUP_URL
+        value: https://t.me/+OzztqZ23h8AxYWZl
+      - key: OWNER_CONTACT_URL
+        value: https://t.me/Global_X_SohaN
+      - key: TIMEZONE
+        value: Asia/Kolkata
+      - key: LOG_LEVEL
+        value: INFO
+      - key: LOG_FILE
+        value: /tmp/gsi-study-mcq-bot.log
+      - key: SOURCE_STORAGE_DIR
+        value: /tmp/gsi-study-mcq-source-storage
+      - key: SOURCE_OCR_ENABLED
+        value: "true"
+      - key: SOURCE_INGEST_TIMEOUT_SECONDS
+        value: "1800"
+      - key: QUESTION_POOL_ENABLED
+        value: "false"
+      - key: AI_MAX_CONCURRENT_REQUESTS
+        value: "4"
+      - key: AI_PROVIDER_COOLDOWN_SECONDS
+        value: "30"
+      - key: AI_PROVIDER_MIN_INTERVAL_SECONDS
+        value: "0.5"
+      - key: VALIDATOR_ENABLED
+        value: "true"
+      - key: VALIDATOR_CONFIDENCE_THRESHOLD
+        value: "0.70"
+      - key: VALIDATOR_COOLDOWN_SECONDS
+        value: "120"
+
+databases:
+  - name: gsi-study-mcq-db
+    plan: starter
+    databaseName: study_mcq_bot
+    user: study_mcq_bot
