@@ -16,6 +16,7 @@ from docx import Document as DocxDocument
 
 from bot.config import Settings, UNIFIED_EXAM_LEVEL, syllabus_topics_for
 from bot.database.repositories import Repository
+from bot.utils.text import sanitize_text
 
 CHUNK_MAX_CHARS = 4800
 MIN_PAGE_TEXT = 40
@@ -87,7 +88,7 @@ def _ocr_page(pdf_path: Path, page_number: int) -> str:
             check=True, capture_output=True, text=True, timeout=45,
         )
         generated.unlink(missing_ok=True)
-        return result.stdout.strip()
+        return sanitize_text(result.stdout).strip()
     except (OSError, subprocess.SubprocessError):
         return ""
 
@@ -102,7 +103,7 @@ def extract_pages(
     total_pages = len(reader.pages)
     pages: list[tuple[int, str]] = []
     for page_number, page in enumerate(reader.pages, 1):
-        text = (page.extract_text() or "").strip()
+        text = sanitize_text(page.extract_text()).strip()
         used_ocr = False
         if len(text) < MIN_PAGE_TEXT and ocr_enabled:
             used_ocr = True
@@ -122,7 +123,7 @@ def _decode_text_file(path: Path) -> str:
         raise ValueError("यह binary file है; readable TXT/CSV/JSON/RTF या DOCX file भेजें।")
     for encoding in ("utf-8-sig", "utf-16", "cp1252", "latin-1"):
         try:
-            return raw.decode(encoding)
+            return sanitize_text(raw.decode(encoding))
         except UnicodeDecodeError:
             continue
     raise ValueError("File का text encoding पढ़ा नहीं जा सका।")
@@ -141,13 +142,13 @@ def extract_document_pages(path: Path) -> tuple[int, list[tuple[int, str]]]:
                 cells = [cell.text.strip() for cell in row.cells if cell.text.strip()]
                 if cells:
                     blocks.append(" | ".join(cells))
-        text = "\n".join(blocks).strip()
+        text = sanitize_text("\n".join(blocks)).strip()
         return (1, [(1, text)] if text else [])
     if suffix in TEXT_EXTENSIONS or suffix == "":
-        text = _decode_text_file(path).replace("\r\n", "\n").replace("\r", "\n").strip()
+        text = sanitize_text(_decode_text_file(path)).replace("\r\n", "\n").replace("\r", "\n").strip()
         return (1, [(1, text)] if text else [])
     try:
-        text = _decode_text_file(path).replace("\r\n", "\n").replace("\r", "\n").strip()
+        text = sanitize_text(_decode_text_file(path)).replace("\r\n", "\n").replace("\r", "\n").strip()
     except ValueError as exc:
         raise ValueError(
             f"{suffix or 'यह'} file readable text/document नहीं है। PDF, TXT, DOCX, CSV, JSON, Markdown या RTF भेजें।"
@@ -182,7 +183,7 @@ def extract_mcq_questions(pages: list[tuple[int, str]]) -> list[dict[str, object
     """Extract already-authored MCQs from text/OCR pages without rewriting them."""
     imported: list[dict[str, object]] = []
     for page_number, page_text in pages:
-        text = page_text.replace("\r", "")
+        text = sanitize_text(page_text).replace("\r", "")
         starts = list(_QUESTION_START_RE.finditer(text))
         for index, match in enumerate(starts):
             block_end = starts[index + 1].start() if index + 1 < len(starts) else len(text)
@@ -225,7 +226,7 @@ def build_chunks(pages: list[tuple[int, str]], *, state: str, subject: str) -> l
 
     def flush() -> None:
         nonlocal current
-        text = " ".join(current).strip()
+        text = sanitize_text(" ".join(current)).strip()
         if text:
             digest = _content_hash(text)
             if digest in seen_hashes:
