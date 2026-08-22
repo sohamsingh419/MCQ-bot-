@@ -18,7 +18,21 @@ from bot.services.quiz import QuizService
 from bot.services.scheduler import SchedulerService
 from bot.services.scoring import ScoringService
 from bot.utils.logger import configure_logging
+from flask import Flask
+import threading
 
+app = Flask("")
+
+@app.route("/")
+def home():
+    return "Bot is alive!"
+
+def run():
+    app.run(host="0.0.0.0", port=8080)
+
+def keep_alive():
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
 logger = logging.getLogger(__name__)
 
 
