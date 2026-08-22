@@ -1,10 +1,11 @@
 services:
-  - type: worker
+  - type: web
     name: gsi-study-mcq-bot
     runtime: docker
     dockerfilePath: ./Dockerfile
     dockerContext: .
-    plan: starter
+    plan: free
+    healthCheckPath: /health
     autoDeployTrigger: commit
     maxShutdownDelaySeconds: 120
     envVars:
