@@ -18,21 +18,8 @@ from bot.services.quiz import QuizService
 from bot.services.scheduler import SchedulerService
 from bot.services.scoring import ScoringService
 from bot.utils.logger import configure_logging
-from flask import Flask
-import threading
+from bot.web import mark_ready, mark_stopping, start_health_server
 
-app = Flask("")
-
-@app.route("/")
-def home():
-    return "Bot is alive!"
-
-def run():
-    app.run(host="0.0.0.0", port=8080)
-
-def keep_alive():
-    t = threading.Thread(target=run, daemon=True)
-    t.start()
 logger = logging.getLogger(__name__)
 
 
@@ -93,10 +80,12 @@ async def post_init(application: Application) -> None:
         BotCommand("status", "Bot Status (Admin only)"),
     ], scope=BotCommandScopeDefault())
     await application.bot_data["scheduler"].start()
-    logger.info("Database initialized, Telegram command menu registered, and scheduler started")
+    mark_ready()
+    logger.info("Database initialized, Telegram command menu registered, scheduler started, and Flask health endpoint ready")
 
 
 async def post_shutdown(application: Application) -> None:
+    mark_stopping()
     scheduler: SchedulerService = application.bot_data["scheduler"]
     await scheduler.stop()
     await application.bot_data["generator"].close()
@@ -208,6 +197,7 @@ def build_application() -> Application:
 
 
 def main() -> None:
+    start_health_server()
     application = build_application()
     application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=False)
 
