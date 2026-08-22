@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from datetime import date, datetime, timedelta, timezone
 from typing import Iterable
 
@@ -16,6 +17,7 @@ from bot.database.models import (
     SourceChunk, SourceDocument, User, UserAnswer,
 )
 from bot.services.question_validator import normalize_text
+from bot.utils.text import sanitize_text
 
 
 class Repository:
@@ -246,7 +248,15 @@ class Repository:
     async def add_source_chunks(self, document_id: int, *, state: str, subject: str, chunks: list[dict[str, object]]) -> int:
         inserted = 0
         for chunk in chunks:
-            row = SourceChunk(document_id=document_id, state=state, subject=subject, **chunk)
+            values = dict(chunk)
+            original_text = values.get("text")
+            clean_text = sanitize_text(str(original_text or ""))
+            values["text"] = clean_text
+            if isinstance(original_text, str) and original_text != clean_text:
+                values["content_hash"] = hashlib.sha256(clean_text.encode("utf-8")).hexdigest()
+            if isinstance(values.get("topic"), str):
+                values["topic"] = sanitize_text(values["topic"])
+            row = SourceChunk(document_id=document_id, state=state, subject=subject, **values)
             try:
                 async with self.session.begin_nested():
                     self.session.add(row)
@@ -293,6 +303,19 @@ class Repository:
         source_document_id: int | None = None, source_title: str | None = None,
         source_page_start: int | None = None, source_page_end: int | None = None,
     ) -> Question:
+        question_text = sanitize_text(question_text)
+        options = [sanitize_text(item) for item in options]
+        explanation = sanitize_text(explanation)
+        key_point = sanitize_text(key_point)
+        state = sanitize_text(state)
+        subject = sanitize_text(subject)
+        topic = sanitize_text(topic)
+        difficulty = sanitize_text(difficulty)
+        question_type = sanitize_text(question_type)
+        language = sanitize_text(language)
+        source = sanitize_text(source)
+        ai_model = sanitize_text(ai_model) if ai_model is not None else None
+        source_title = sanitize_text(source_title) if source_title is not None else None
         question = Question(
             question_text=question_text, normalized_text=normalize_text(question_text), options=options,
             correct_option=correct_option, explanation=explanation, key_point=key_point,
