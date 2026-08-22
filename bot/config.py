@@ -79,6 +79,10 @@ class Settings(BaseSettings):
                 if key == "sslmode":
                     sslmode = item
                     continue
+                if key == "channel_binding":
+                    # channel_binding is a libpq keyword and is not accepted
+                    # by the installed asyncpg connect() implementation.
+                    continue
                 if key == "ssl":
                     has_ssl = True
                 normalized_pairs.append((key, item))
