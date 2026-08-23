@@ -78,6 +78,9 @@ async def post_init(application: Application) -> None:
         BotCommand("targeted", "Targeted Delivery"),
         BotCommand("botreport", "Diagnostic Report (Admin)"),
         BotCommand("status", "Bot Status (Admin only)"),
+        BotCommand("questiondelivery", "Global Questions ON/OFF"),
+        BotCommand("deliveryon", "Resume Questions (Admin)"),
+        BotCommand("deliveryoff", "Pause Questions (Admin)"),
     ], scope=BotCommandScopeDefault())
     await application.bot_data["scheduler"].start()
     mark_ready()
@@ -176,6 +179,9 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("groupstats", admin.groupstats_command))
     application.add_handler(CommandHandler("botreport", admin.botreport_command))
     application.add_handler(CommandHandler("status", admin.status_command))
+    application.add_handler(CommandHandler("questiondelivery", admin.questiondelivery_command))
+    application.add_handler(CommandHandler("deliveryon", admin.questiondelivery_on_command))
+    application.add_handler(CommandHandler("deliveryoff", admin.questiondelivery_off_command))
     application.add_handler(ChatMemberHandler(group_setup.group_welcome_on_join, ChatMemberHandler.MY_CHAT_MEMBER))
     application.add_handler(CallbackQueryHandler(group_setup.settings_callback, pattern=r"^gset:"))
     application.add_handler(CallbackQueryHandler(dm.dm_settings_callback, pattern=r"^dset:"))
