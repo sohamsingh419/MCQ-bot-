@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.config import DEFAULT_LANGUAGE, DEFAULT_SUBJECTS, DEFAULT_XP_MAP, GSI_HONOR_TAG, UNIFIED_EXAM_LEVEL
 from bot.database.models import (
-    DailyChallenge, DeliveryCampaign, DeliveryReceipt, Group, GroupSettings, MockTest, MockTestParticipant, MockTestResult,
+    BotControl, DailyChallenge, DeliveryCampaign, DeliveryReceipt, Group, GroupSettings, MockTest, MockTestParticipant, MockTestResult,
     OfficialQuiz, OfficialQuizDraft, OfficialQuizParticipant, OfficialQuizResult, Question, QuizHistory,
     SourceChunk, SourceDocument, User, UserAnswer,
 )
@@ -45,6 +45,21 @@ class Repository:
 
     async def get_settings(self, group_id: int) -> GroupSettings | None:
         return await self.session.get(GroupSettings, group_id)
+
+    async def get_bot_control(self) -> BotControl:
+        control = await self.session.get(BotControl, 1)
+        if control is None:
+            control = BotControl(id=1, question_delivery_enabled=True)
+            self.session.add(control)
+            await self.session.flush()
+        return control
+
+    async def set_question_delivery_enabled(self, enabled: bool, updated_by: int | None = None) -> BotControl:
+        control = await self.get_bot_control()
+        control.question_delivery_enabled = enabled
+        control.updated_by = updated_by
+        await self.session.flush()
+        return control
 
     async def update_settings(self, group_id: int, **values: object) -> GroupSettings:
         settings = await self.session.get(GroupSettings, group_id)
@@ -461,6 +476,32 @@ class Repository:
     async def get_quiz_by_poll(self, poll_id: str) -> QuizHistory | None:
         result = await self.session.execute(select(QuizHistory).where(QuizHistory.telegram_poll_id == poll_id))
         return result.scalar_one_or_none()
+
+    async def quiz_for_message(self, group_id: int, message_id: int, question_id: int) -> QuizHistory | None:
+        result = await self.session.execute(
+            select(QuizHistory).where(
+                QuizHistory.group_id == group_id,
+                QuizHistory.message_id == message_id,
+                QuizHistory.question_id == question_id,
+            ).limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def user_has_answered_poll(self, poll_id: str, user_id: int) -> bool:
+        result = await self.session.execute(
+            select(UserAnswer.id).where(and_(UserAnswer.poll_id == poll_id, UserAnswer.user_id == user_id)).limit(1)
+        )
+        return result.scalar_one_or_none() is not None
+
+    async def private_chat_is_available(self, user_id: int) -> bool:
+        result = await self.session.execute(
+            select(Group.telegram_chat_id).where(
+                Group.telegram_chat_id == user_id,
+                Group.chat_type == "private",
+                Group.is_active.is_(True),
+            ).limit(1)
+        )
+        return result.scalar_one_or_none() is not None
 
     async def delivered_question_history(self, chat_id: int) -> tuple[set[int], list[str]]:
         """Return every question ID and text previously delivered to this chat."""
