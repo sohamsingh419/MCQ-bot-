@@ -84,6 +84,15 @@ class GroupSettings(TimestampMixin, Base):
     group: Mapped[Group] = relationship(back_populates="settings")
 
 
+class BotControl(TimestampMixin, Base):
+    """Singleton bot-wide controls managed by configured bot administrators."""
+    __tablename__ = "bot_control"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    question_delivery_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    updated_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+
+
 class Question(TimestampMixin, Base):
     __tablename__ = "questions"
 
