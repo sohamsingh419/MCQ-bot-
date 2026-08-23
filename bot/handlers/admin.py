@@ -248,6 +248,59 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await update.effective_message.reply_text(report, parse_mode="HTML", disable_web_page_preview=True)
 
 
+async def _set_question_delivery(update: Update, context: ContextTypes.DEFAULT_TYPE, enabled: bool | None = None) -> None:
+    if not update.effective_user or not update.effective_message:
+        return
+    settings = get_settings()
+    if update.effective_user.id not in settings.global_admin_ids:
+        await update.effective_message.reply_text("यह command केवल configured bot admin के लिए उपलब्ध है।")
+        return
+    if enabled is None:
+        raw = command_text(context.args).casefold() if context.args else ""
+        if raw in {"on", "enable", "enabled", "चालू", "start"}:
+            enabled = True
+        elif raw in {"off", "disable", "disabled", "बंद", "stop"}:
+            enabled = False
+        else:
+            database = context.application.bot_data["database"]
+            async with database.session_factory() as session:
+                control = await Repository(session).get_bot_control()
+                await session.commit()
+            state = "ON / चालू" if control.question_delivery_enabled else "OFF / बंद"
+            await update.effective_message.reply_text(
+                f"Global question delivery: <b>{state}</b>.", parse_mode="HTML"
+            )
+            return
+    database = context.application.bot_data["database"]
+    async with database.session_factory() as session:
+        repo = Repository(session)
+        control = await repo.set_question_delivery_enabled(enabled, update.effective_user.id)
+        await repo.commit()
+    if enabled:
+        message = (
+            "✅ <b>Global question delivery ON / चालू</b>\n\n"
+            "Automatic questions अब सभी eligible groups और private chats में फिर से भेजे जाएँगे।"
+        )
+    else:
+        message = (
+            "⏸️ <b>Global question delivery OFF / बंद</b>\n\n"
+            "Bot अब किसी group या private chat में automatic questions नहीं भेजेगी। Existing polls के answers और results फिर भी process होंगे।"
+        )
+    await update.effective_message.reply_text(message, parse_mode="HTML")
+
+
+async def questiondelivery_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _set_question_delivery(update, context)
+
+
+async def questiondelivery_on_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _set_question_delivery(update, context, True)
+
+
+async def questiondelivery_off_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _set_question_delivery(update, context, False)
+
+
 async def _settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     database = context.application.bot_data["database"]
     async with database.session_factory() as session:

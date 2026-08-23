@@ -45,8 +45,18 @@ async def explanation_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         question = await repo.get_question(question_id)
         source_message = getattr(query, "message", None)
         settings = await repo.get_settings(source_message.chat.id) if source_message else None
+        history = (
+            await repo.quiz_for_message(source_message.chat.id, source_message.message_id, question_id)
+            if source_message is not None else None
+        )
+        answered = bool(history and await repo.user_has_answered_poll(history.telegram_poll_id, query.from_user.id))
     if question is None:
         await query.answer("This explanation is no longer available.", show_alert=True)
+        return
+    if not answered:
+        ui_language = settings.language if settings is not None else "Hindi"
+        message = "पहले इस प्रश्न का उत्तर दें, फिर व्याख्या देखें।" if ui_language == "Hindi" else "Answer this question first, then view the explanation."
+        await query.answer(message, show_alert=True)
         return
 
     ui_language = settings.language if settings is not None else "Hindi"
