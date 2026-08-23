@@ -227,6 +227,10 @@ class FakeQuery:
     def __init__(self, question_id: int):
         self.data = f"explain:{question_id}"
         self.from_user = SimpleNamespace(id=8101)
+        self.message = SimpleNamespace(
+            chat=SimpleNamespace(id=8101, type="private"),
+            message_id=1,
+        )
         self.answers = []
 
     async def answer(self, *args, **kwargs):
@@ -239,6 +243,8 @@ async def test_explanation_callback_sends_only_to_requesting_user_dm() -> None:
     await database.create_schema()
     async with database.session_factory() as session:
         repo = Repository(session)
+        await repo.ensure_group(8101, "Learner DM", "private")
+        await repo.upsert_user(8101, "learner", "Learner")
         question = await repo.add_question(
             question_text="भारत की राजधानी क्या है?",
             options=["नई दिल्ली", "मुंबई", "कोलकाता", "चेन्नई"],
@@ -247,6 +253,14 @@ async def test_explanation_callback_sends_only_to_requesting_user_dm() -> None:
             key_point="भारत की केंद्रीय सरकार नई दिल्ली से संचालित होती है।",
             state="General", subject="General Knowledge", topic="India", difficulty="Exam",
             question_type="Conceptual", language="Hindi", source="admin",
+        )
+        await repo.record_quiz(
+            group_id=8101, question_id=question.id, poll_id="explanation-poll", message_id=1,
+            quiz_kind="automatic", closes_at=None,
+        )
+        await repo.record_answer(
+            poll_id="explanation-poll", group_id=8101, question_id=question.id, user_id=8101,
+            selected_option=0, is_correct=True, xp_awarded=10, points_awarded=10,
         )
         await repo.commit()
 
