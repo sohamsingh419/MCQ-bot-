@@ -67,12 +67,14 @@ class ScoringService:
                     user.total_points += streak_bonus
             await repo.commit()
             try:
-                if is_correct and user.current_streak in STREAK_BONUSES:
-                    # The poll answer can be handled even when no normal message context exists.
+                if is_correct and user.current_streak in STREAK_BONUSES and await repo.private_chat_is_available(user.telegram_user_id):
+                    # Never announce streaks in the group. Only users who have
+                    # started the bot privately can receive this notification.
                     prefix = f"{user.honor_tag} " if user.honor_tag else ""
-                    await self.bot.send_message(
-                        chat_id=history.group_id,
-                        text=f"{prefix}{user.display_name}: {user.current_streak} correct answers in a row.",
-                    )
+                    if user.preferred_language == "English":
+                        text = f"✅ {prefix}{user.current_streak} correct answers in a row! Keep going."
+                    else:
+                        text = f"✅ {prefix}{user.current_streak} प्रश्न लगातार सही! ऐसे ही आगे बढ़ते रहिए।"
+                    await self.bot.send_message(chat_id=user.telegram_user_id, text=text)
             except (TelegramError, RuntimeError):
-                logger.exception("Streak notification failed")
+                logger.exception("Private streak notification failed")

@@ -222,6 +222,9 @@ class OfficialQuizService:
                 quiz = await repo.get_official_quiz(quiz_id)
                 if quiz is None or quiz.status != "running":
                     return False
+                if not await self.quiz_service.delivery_allowed_for_chat(session, quiz.play_group_id):
+                    logger.info("Official quiz question delivery blocked for play group %s", quiz.play_group_id)
+                    return False
                 number = quiz.current_question_number + 1
                 if number > quiz.question_count:
                     return False

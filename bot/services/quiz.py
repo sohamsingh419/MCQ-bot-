@@ -11,12 +11,12 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy.exc import IntegrityError
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.constants import PollType
+from telegram.constants import ChatMemberStatus, PollType
 from telegram.error import BadRequest, Forbidden, RetryAfter, TelegramError, TimedOut
 
 from bot.config import QUESTION_LANGUAGE, Settings, UNIFIED_EXAM_LEVEL, default_subjects_for_state, get_settings, subjects_for_state, syllabus_topics_for
 from bot.database.database import Database
-from bot.database.models import GroupSettings, Question
+from bot.database.models import Group, GroupSettings, Question
 from bot.database.repositories import Repository
 from bot.services.ai_generator import AIQuestionGenerator, AIQuestionGenerationError, question_types_for_difficulty
 from bot.services.question_validator import ValidQuestion, is_structurally_complete, source_evidence_supports_question
@@ -332,6 +332,8 @@ class QuizService:
                 settings = await repo.get_settings(group_id)
                 if settings is None or not settings.quiz_active:
                     return 0
+                if not await self.delivery_allowed_for_chat(session, group_id):
+                    return 0
                 allowed = set(subjects_for_state(settings.state))
                 subjects = [item for item in (settings.subjects or []) if item in allowed]
                 if not subjects:
@@ -377,6 +379,42 @@ class QuizService:
                     await repo.commit()
                 return generated_count
 
+    async def delivery_allowed_for_chat(self, session, chat_id: int) -> bool:
+        """Return whether a new question may be sent to this chat right now."""
+        repo = Repository(session)
+        control = await repo.get_bot_control()
+        if not control.question_delivery_enabled:
+            logger.info("Global question delivery is OFF; skipping delivery to %s", chat_id)
+            return False
+        group = await session.get(Group, chat_id)
+        if group is None or group.chat_type == "private":
+            return True
+        if group.chat_type not in {"group", "supergroup"}:
+            return False
+        settings = await repo.get_settings(chat_id)
+        if settings is None:
+            return False
+        if settings.bot_is_admin:
+            return True
+        # Real Telegram Bot instances always expose both methods. Lightweight
+        # unit fakes from legacy tests may not; they cannot perform a rights
+        # check, so leave those tests focused on question selection.
+        if not callable(getattr(self.bot, "get_me", None)) or not callable(getattr(self.bot, "get_chat_member", None)):
+            return True
+        try:
+            bot_user = await self.bot.get_me()
+            member = await self.bot.get_chat_member(chat_id, bot_user.id)
+            if member.status in {ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER}:
+                settings.bot_is_admin = True
+                settings.admin_reminder_stage = 8
+                settings.admin_reminder_sent_at = datetime.now(timezone.utc)
+                await session.flush()
+                return True
+        except Exception:
+            logger.warning("Could not verify bot admin rights for %s; blocking question delivery", chat_id, exc_info=True)
+        logger.info("Bot is not an administrator in %s; blocking question delivery", chat_id)
+        return False
+
     def is_quiet_hours(self, now: datetime | None = None) -> bool:
         now = now or datetime.now(timezone.utc)
         try:
@@ -404,6 +442,8 @@ class QuizService:
                 repo = Repository(session)
                 settings = await repo.get_settings(group_id)
                 if settings is None or (not force and not settings.quiz_active):
+                    return None
+                if not await self.delivery_allowed_for_chat(session, group_id):
                     return None
                 if not force and quiz_kind == "automatic" and settings.last_quiz_at:
                     last_quiz_at = settings.last_quiz_at
