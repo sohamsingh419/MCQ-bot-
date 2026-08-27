@@ -27,5 +27,7 @@ def test_daily_routine_messages_are_decorated_and_slot_specific() -> None:
     morning = SchedulerService._routine_message("morning", day)
     assert "<b>" in night and "🌙" in night and "Good night, all friends!" in night
     assert "<b>" in morning and "🌅" in morning and "Good morning, friends!" in morning
-    assert SchedulerService._motivation_for_date(day) in night
-    assert SchedulerService._motivation_for_date(day) in morning
+    assert SchedulerService._motivation_for_slot("night", day) in night
+    assert SchedulerService._motivation_for_slot("morning", day) in morning
+    assert SchedulerService._motivation_for_slot("night", day) != SchedulerService._motivation_for_slot("morning", day)
+    assert night != morning
