@@ -76,7 +76,8 @@ For production, use PostgreSQL with the async SQLAlchemy URL form. Render’s ma
 | Variable group | Important variables |
 |---|---|
 | Telegram and database | `BOT_TOKEN`, `DATABASE_URL` |
-| Existing AI providers | `AI_API_KEY`, optional `AI_BASE_URL`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `MISTRAL_API_KEY` and their model variables |
+| AI providers and fallbacks | `AI_API_KEY`/`AI_BASE_URL`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `MISTRAL_API_KEY`, optional `OPENROUTER_API_KEY`, `CEREBRAS_API_KEY`, `SAMBANOVA_API_KEY`, and authorized `AI_SEEK_API_KEY`, plus their model/base URL variables |
+| Question quality and cleanup | `VALIDATOR_ENABLED`, `VALIDATOR_CONFIDENCE_THRESHOLD`, `VALIDATOR_REQUIRE_APPROVAL`; admin commands `/exportquestions`, `/question <ID>`, `/removequestion <ID>`, `/removequestions <ID1,ID2>` |
 | Administrators | `ADMIN_USER_IDS` |
 | Source mode | `SOURCE_GROUP_ID`, `BULK_SOURCE_GROUP_ID`, `SOURCE_OCR_ENABLED`, `SOURCE_STORAGE_DIR`, `SOURCE_INGEST_TIMEOUT_SECONDS` |
 | Official competitions | `OFFICIAL_QUIZ_CONFIG_GROUP_ID`, `OFFICIAL_QUIZ_PLAY_GROUP_ID` |
@@ -93,12 +94,12 @@ This bot is a **background worker**, not an HTTP web service. Long polling and t
 
 1. Push this repository to a private GitHub, GitLab, or Bitbucket repository. Do not push `.env` or any populated secret file.
 2. In the Render dashboard, create a new **Blueprint** and connect the repository. Render reads the root `render.yaml` by default.[3]
-3. Enter the prompted values for `BOT_TOKEN`, `AI_API_KEY`, the available Gemini/Groq/Mistral keys, `ADMIN_USER_IDS`, and optional `NEWS_API_KEY`.
+3. Enter the prompted values for `BOT_TOKEN`, any available Gemini/Groq/Mistral/OpenRouter/Cerebras/SambaNova keys, and the authorized `AI_SEEK_API_KEY` only if you have permission to use that endpoint. At least one AI key is required; every configured optional provider is tried after a temporary 429/5xx, timeout, or connection failure.
 4. Review the generated worker and PostgreSQL resources, then deploy the Blueprint.
 5. Confirm the worker log contains `Database initialized, Telegram command menu registered, and scheduler started`, `Application started`, and successful Telegram polling activity.
 6. Test `/start`, `/help`, `/rules`, `/settings`, source ingestion, and one official quiz in the configured Telegram chats.
 
-Only one Render worker should use the bot token. Running the same token locally at the same time can create competing polling consumers.
+Provider order is Gemini → Groq → Mistral → OpenRouter → Cerebras → SambaNova → authorized AI Seek → the legacy `AI_API_KEY` provider. AI Seek is an opt-in last-resort app endpoint: its token must be supplied through `AI_SEEK_API_KEY`, never committed to source control. Its model list is configured through `AI_SEEK_MODELS`; the adapter sends one model at a time and stops after the first valid JSON response. A provider is cooled down after a temporary capacity response, so the bot does not repeatedly hammer the same exhausted key. These providers have independent quotas; adding keys gives the bot additional fallback paths but does not combine quotas. For question cleanup, a bot administrator can run `/exportquestions` to receive a UTF-8 CSV containing every active question ID, question text, options, stored answer, explanation, source, model, and creation time. Add `all` as `/exportquestions all` to include already inactive records. Inspect a record with `/question 123`, then deactivate it with `/removequestion 123`; several records can be deactivated with `/removequestions 123,124,125`. Deactivation is a soft delete, so old quiz history remains intact while the question is excluded from future delivery. With `VALIDATOR_REQUIRE_APPROVAL=true`, a newly generated AI question is not accepted when independent validation is unavailable; the bot will use an existing validated question instead. For the highest factual accuracy, generate questions from an authoritative PDF/source context rather than relying only on model memory. Only one Render worker should use the bot token. Running the same token locally at the same time can create competing polling consumers.
 
 ## Database and source durability
 

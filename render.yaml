@@ -25,6 +25,34 @@ services:
         sync: false
       - key: MISTRAL_API_KEY
         sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_MODEL
+        value: google/gemma-4-31b-it:free
+      - key: OPENROUTER_BASE_URL
+        value: https://openrouter.ai/api/v1
+      - key: CEREBRAS_API_KEY
+        sync: false
+      - key: CEREBRAS_MODEL
+        value: gpt-oss-120b
+      - key: CEREBRAS_BASE_URL
+        value: https://api.cerebras.ai/v1
+      - key: SAMBANOVA_API_KEY
+        sync: false
+      - key: SAMBANOVA_MODEL
+        value: Meta-Llama-3.3-70B-Instruct
+      - key: SAMBANOVA_BASE_URL
+        value: https://api.sambanova.ai/v1
+      - key: AI_SEEK_API_KEY
+        sync: false
+      - key: AI_SEEK_URL
+        value: https://ai-seek.thebetter.ai/v4/chat/send
+      - key: AI_SEEK_MODELS
+        value: qwen/qwen-coder-32b,google/gemini-2.5-flash-lite
+      - key: AI_SEEK_APP_ID
+        value: ai-seek
+      - key: AI_SEEK_DEVICE_INFO
+        sync: false
       - key: NEWS_API_KEY
         sync: false
       - key: ADMIN_USER_IDS
@@ -69,6 +97,8 @@ services:
         value: "0.70"
       - key: VALIDATOR_COOLDOWN_SECONDS
         value: "120"
+      - key: VALIDATOR_REQUIRE_APPROVAL
+        value: "true"
 
 databases:
   - name: gsi-study-mcq-db
