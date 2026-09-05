@@ -3,7 +3,9 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import csv
 import html
+import io
 import os
 import re
 
@@ -134,6 +136,10 @@ async def botreport_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         "Gemini": bool(settings.gemini_api_key),
         "Groq": bool(settings.groq_api_key),
         "Mistral": bool(settings.mistral_api_key),
+        "OpenRouter": bool(settings.openrouter_api_key),
+        "Cerebras": bool(settings.cerebras_api_key),
+        "SambaNova": bool(settings.sambanova_api_key),
+        "AI Seek": bool(settings.ai_seek_api_key),
         "OpenAI-compatible": bool(settings.ai_api_key),
     }
     source_text = ", ".join(f"{html.escape(str(source or 'unknown'))}: {count}" for source, count in source_rows) or "none"
@@ -576,6 +582,85 @@ async def addquestion_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.effective_message.reply_text("Validated question added to the database.")
 
 
+async def exportquestions_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Export saved questions with IDs so an admin can review and bulk-deactivate them."""
+    if not await _admin_group(update, context):
+        return
+    include_inactive = bool(context.args and context.args[0].lower() in {"all", "inactive"})
+    database = context.application.bot_data["database"]
+    async with database.session_factory() as session:
+        questions = await Repository(session).review_questions(limit=10000, active_only=not include_inactive)
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow([
+        "id", "active", "question", "option_1", "option_2", "option_3", "option_4",
+        "correct_option_number", "correct_answer", "explanation", "state", "subject", "topic",
+        "difficulty", "question_type", "language", "source", "ai_model", "created_at",
+    ])
+    for question in questions:
+        options = list(question.options or [])
+        correct_answer = options[question.correct_option] if 0 <= question.correct_option < len(options) else ""
+        writer.writerow([
+            question.id, "yes" if question.is_active else "no", question.question_text,
+            *(options + [""] * 4)[:4], question.correct_option + 1, correct_answer,
+            question.explanation, question.state, question.subject, question.topic,
+            question.difficulty, question.question_type, question.language, question.source,
+            question.ai_model or "", question.created_at.isoformat() if question.created_at else "",
+        ])
+    data = io.BytesIO(output.getvalue().encode("utf-8-sig"))
+    data.name = "questions_export.csv"
+    caption = f"Exported {len(questions)} question(s). Review the ID column, then use /removequestions ID1,ID2."
+    await update.effective_message.reply_document(document=data, filename="questions_export.csv", caption=caption)
+
+
+async def question_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _admin_group(update, context):
+        return
+    try:
+        question_id = int(command_text(context.args))
+    except ValueError:
+        await update.effective_message.reply_text("Use /question followed by the numeric question ID.")
+        return
+    database = context.application.bot_data["database"]
+    async with database.session_factory() as session:
+        question = await Repository(session).get_question(question_id)
+    if question is None:
+        await update.effective_message.reply_text("No question with that ID exists.")
+        return
+    options = "\\n".join(f"{index + 1}. {item}" for index, item in enumerate(question.options))
+    answer = question.options[question.correct_option] if 0 <= question.correct_option < len(question.options) else "invalid index"
+    status = "ACTIVE" if question.is_active else "INACTIVE"
+    await update.effective_message.reply_text(
+        f"ID: {question.id} | {status}\\n"
+        f"Source: {question.source} | Model: {question.ai_model or 'n/a'}\\n"
+        f"Subject: {question.subject} | Topic: {question.topic}\\n\\n"
+        f"{question.question_text}\\n\\n{options}\\n\\n"
+        f"Stored answer: {question.correct_option + 1}. {answer}\\n"
+        f"Explanation: {question.explanation}"
+    )
+
+
+async def removequestions_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _admin_group(update, context):
+        return
+    raw = command_text(context.args).replace(" ", "")
+    try:
+        question_ids = [int(item) for item in raw.split(",") if item]
+    except ValueError:
+        await update.effective_message.reply_text("Use /removequestions like: /removequestions 101,102,103")
+        return
+    if not question_ids:
+        await update.effective_message.reply_text("Provide at least one numeric question ID.")
+        return
+    database = context.application.bot_data["database"]
+    async with database.session_factory() as session:
+        removed = await Repository(session).remove_questions(question_ids)
+        await session.commit()
+    await update.effective_message.reply_text(
+        f"Deactivated {removed} question(s). They remain in history but will not be delivered again."
+    )
+
+
 async def removequestion_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _admin_group(update, context):
         return
@@ -589,7 +674,9 @@ async def removequestion_command(update: Update, context: ContextTypes.DEFAULT_T
         repo = Repository(session)
         removed = await repo.remove_question(question_id)
         await repo.commit()
-    await update.effective_message.reply_text("Question removed." if removed else "No question with that ID exists.")
+    await update.effective_message.reply_text(
+        "Question deactivated and excluded from future quizzes." if removed else "No active question with that ID exists."
+    )
 
 
 async def mocktest_admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
