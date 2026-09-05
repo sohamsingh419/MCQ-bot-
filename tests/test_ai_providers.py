@@ -32,6 +32,10 @@ async def test_provider_order_is_gemini_then_groq_then_legacy() -> None:
 
     generator._request_gemini = gemini
     generator._request_groq = groq
+    generator._request_mistral = legacy
+    generator._request_openrouter = legacy
+    generator._request_cerebras = legacy
+    generator._request_sambanova = legacy
     generator._request_openai_compatible = legacy
 
     result = await generator._request("test prompt")
@@ -55,6 +59,9 @@ async def test_mistral_provider_is_used_before_legacy_fallback() -> None:
     generator._request_gemini = unavailable
     generator._request_groq = unavailable
     generator._request_mistral = mistral
+    generator._request_openrouter = unavailable
+    generator._request_cerebras = unavailable
+    generator._request_sambanova = unavailable
     generator._request_openai_compatible = unavailable
 
     assert await generator._request("test prompt") == {"provider": "mistral"}
@@ -77,10 +84,14 @@ async def test_legacy_provider_is_last_resort() -> None:
     generator._request_gemini = unavailable
     generator._request_groq = unavailable
     generator._request_mistral = unavailable
+    generator._request_openrouter = unavailable
+    generator._request_cerebras = unavailable
+    generator._request_sambanova = unavailable
+    generator._request_ai_seek = unavailable
     generator._request_openai_compatible = legacy
 
     assert await generator._request("test prompt") == {"provider": "legacy"}
-    assert calls == ["unavailable", "unavailable", "unavailable", "legacy"]
+    assert calls == ["unavailable", "unavailable", "unavailable", "unavailable", "unavailable", "unavailable", "unavailable", "legacy"]
 
 
 @pytest.mark.asyncio
@@ -96,6 +107,10 @@ async def test_provider_cooldown_skips_repeated_rate_limited_calls() -> None:
     generator._request_gemini = rate_limited
     generator._request_groq = rate_limited
     generator._request_mistral = rate_limited
+    generator._request_openrouter = rate_limited
+    generator._request_cerebras = rate_limited
+    generator._request_sambanova = rate_limited
+    generator._request_ai_seek = rate_limited
     generator._request_openai_compatible = rate_limited
 
     with pytest.raises(AICompletionUnavailableError):
@@ -103,8 +118,74 @@ async def test_provider_cooldown_skips_repeated_rate_limited_calls() -> None:
     first_call_count = len(calls)
     with pytest.raises(AICompletionUnavailableError):
         await generator._request("test prompt")
-    assert first_call_count == 4
+    assert first_call_count == 8
     assert len(calls) == first_call_count
+
+
+@pytest.mark.asyncio
+async def test_openrouter_is_used_before_cerebras_and_legacy() -> None:
+    generator = object.__new__(AIQuestionGenerator)
+
+    async def unavailable(_: str):
+        raise AICompletionUnavailableError("provider unavailable")
+
+    async def openrouter(_: str):
+        return {"provider": "openrouter"}
+
+    generator._request_gemini = unavailable
+    generator._request_groq = unavailable
+    generator._request_mistral = unavailable
+    generator._request_openrouter = openrouter
+    generator._request_cerebras = unavailable
+    generator._request_sambanova = unavailable
+    generator._request_openai_compatible = unavailable
+
+    assert await generator._request("test prompt") == {"provider": "openrouter"}
+
+
+@pytest.mark.asyncio
+async def test_ai_seek_fallback_uses_first_successful_model(monkeypatch) -> None:
+    generator = object.__new__(AIQuestionGenerator)
+    generator.settings = SimpleNamespace(
+        ai_seek_api_key="authorized-test-key",
+        ai_seek_models="model-a,model-b",
+        ai_seek_app_id="ai-seek",
+        ai_seek_device_info="",
+        ai_seek_url="https://example.test/ai-seek",
+    )
+    generator._system_prompt = lambda: "system"
+
+    class FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def aiter_lines(self):
+            yield 'data: {"content":"{\\"question\\":\\"यह एक पर्याप्त प्रश्न है?\\",\\"options\\":[\\"A\\",\\"B\\",\\"C\\",\\"D\\"],\\"correct_option\\":0,\\"explanation\\":\\"कारण स्पष्ट है।\\",\\"key_point\\":\\"मुख्य तथ्य\\",\\"subject\\":\\"Test\\",\\"topic\\":\\"Topic\\",\\"difficulty\\":\\"Exam\\",\\"question_type\\":\\"Conceptual\\",\\"language\\":\\"Hindi\\"}"}'
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        def stream(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr("bot.services.ai_generator.httpx.AsyncClient", FakeClient)
+    result = await generator._request_ai_seek("prompt")
+    assert result["correct_option"] == 0
 
 
 def test_provider_json_parser_rejects_malformed_content() -> None:
@@ -133,6 +214,7 @@ def _validator_settings() -> SimpleNamespace:
         validator_enabled=True,
         validator_confidence_threshold=0.70,
         validator_cooldown_seconds=120,
+        validator_require_approval=False,
         groq_model="validator-model",
         ai_model="fallback-model",
     )
