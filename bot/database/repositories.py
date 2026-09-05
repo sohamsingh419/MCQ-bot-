@@ -346,6 +346,15 @@ class Repository:
     async def get_question(self, question_id: int) -> Question | None:
         return await self.session.get(Question, question_id)
 
+    async def review_questions(self, *, limit: int = 50, active_only: bool = True) -> list[Question]:
+        conditions = [Question.source != "official_quiz"]
+        if active_only:
+            conditions.append(Question.is_active.is_(True))
+        result = await self.session.execute(
+            select(Question).where(and_(*conditions)).order_by(desc(Question.created_at)).limit(limit)
+        )
+        return list(result.scalars())
+
     async def similar_question_texts(self, state: str, subject: str, language: str = DEFAULT_LANGUAGE, limit: int = 250) -> list[str]:
         result = await self.session.execute(
             select(Question.question_text)
@@ -997,11 +1006,20 @@ class Repository:
         return await self.session.get(User, user_id)
 
     async def remove_question(self, question_id: int) -> bool:
-        question = await self.session.get(Question, question_id)
-        if question is None:
-            return False
-        await self.session.delete(question)
-        return True
+        """Deactivate a question without breaking quiz history foreign keys."""
+        result = await self.session.execute(
+            update(Question).where(Question.id == question_id, Question.is_active.is_(True)).values(is_active=False)
+        )
+        return bool(result.rowcount)
+
+    async def remove_questions(self, question_ids: Iterable[int]) -> int:
+        ids = sorted({int(item) for item in question_ids})
+        if not ids:
+            return 0
+        result = await self.session.execute(
+            update(Question).where(Question.id.in_(ids), Question.is_active.is_(True)).values(is_active=False)
+        )
+        return int(result.rowcount or 0)
 
     async def commit(self) -> None:
         for attempt in range(4):
