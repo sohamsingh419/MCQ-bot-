@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import time
+import uuid
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -119,7 +120,7 @@ class CurrentAffairsProvider:
 class AIQuestionGenerator:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
-        kwargs: dict[str, Any] = {"api_key": settings.ai_api_key, "timeout": 35.0, "max_retries": 0}
+        kwargs: dict[str, Any] = {"api_key": settings.ai_api_key or "unused-openai-compatible-key", "timeout": 35.0, "max_retries": 0}
         if settings.ai_base_url:
             kwargs["base_url"] = settings.ai_base_url
         self.client = AsyncOpenAI(**kwargs)
@@ -135,11 +136,31 @@ class AIQuestionGenerator:
             timeout=35.0,
             max_retries=0,
         ) if settings.mistral_api_key else None
+        self.openrouter_client = AsyncOpenAI(
+            api_key=settings.openrouter_api_key or "unused-openrouter-key",
+            base_url=settings.openrouter_base_url,
+            timeout=35.0,
+            max_retries=0,
+        ) if settings.openrouter_api_key else None
+        self.cerebras_client = AsyncOpenAI(
+            api_key=settings.cerebras_api_key or "unused-cerebras-key",
+            base_url=settings.cerebras_base_url,
+            timeout=35.0,
+            max_retries=0,
+        ) if settings.cerebras_api_key else None
+        self.sambanova_client = AsyncOpenAI(
+            api_key=settings.sambanova_api_key or "unused-sambanova-key",
+            base_url=settings.sambanova_base_url,
+            timeout=35.0,
+            max_retries=0,
+        ) if settings.sambanova_api_key else None
         self.current_affairs = CurrentAffairsProvider(settings)
         self._validator_cooldown_until = 0.0
         self._request_slots = asyncio.Semaphore(int(getattr(settings, "ai_max_concurrent_requests", 4)))
         self._provider_locks = {
-            name: asyncio.Lock() for name in ("gemini", "groq", "mistral", "openai-compatible")
+            name: asyncio.Lock() for name in (
+                "gemini", "groq", "mistral", "openrouter", "cerebras", "sambanova", "ai-seek", "openai-compatible"
+            )
         }
         self._provider_cooldown_until: dict[str, float] = {}
         self._provider_next_request_at: dict[str, float] = {}
@@ -332,6 +353,119 @@ PDF Source Mode material (when supplied) is authoritative for this question. Use
             raise AICompletionUnavailableError("OpenAI-compatible provider returned no completion")
         return self._parse_json_content(choices[0].message.content)
 
+    async def _request_openai_compatible_json(
+        self, client: AsyncOpenAI | None, model: str, provider: str, user_prompt: str,
+    ) -> dict[str, Any]:
+        if client is None:
+            raise AICompletionUnavailableError(f"{provider} API key is not configured")
+        try:
+            response = await client.chat.completions.create(
+                model=model,
+                temperature=0.25,
+                max_tokens=1000,
+                response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": self._system_prompt() + " Return valid JSON only."},
+                    {"role": "user", "content": user_prompt},
+                ],
+            )
+        except APIStatusError as exc:
+            if exc.status_code in {429, 502, 503, 504}:
+                raise AIProviderRateLimitError(f"{provider} temporary capacity/rate-limit response {exc.status_code}") from exc
+            raise
+        choices = response.choices or []
+        if not choices:
+            raise AICompletionUnavailableError(f"{provider} returned no completion")
+        return self._parse_json_content(choices[0].message.content)
+
+    async def _request_openrouter(self, user_prompt: str) -> dict[str, Any]:
+        return await self._request_openai_compatible_json(
+            self.openrouter_client, self.settings.openrouter_model, "OpenRouter", user_prompt
+        )
+
+    async def _request_cerebras(self, user_prompt: str) -> dict[str, Any]:
+        return await self._request_openai_compatible_json(
+            self.cerebras_client, self.settings.cerebras_model, "Cerebras", user_prompt
+        )
+
+    async def _request_sambanova(self, user_prompt: str) -> dict[str, Any]:
+        return await self._request_openai_compatible_json(
+            self.sambanova_client, self.settings.sambanova_model, "SambaNova", user_prompt
+        )
+
+    async def _request_ai_seek(self, user_prompt: str) -> dict[str, Any]:
+        """Use the authorized AI Seek app endpoint as an opt-in last-resort provider."""
+        settings = getattr(self, "settings", None)
+        api_key = getattr(settings, "ai_seek_api_key", None)
+        if not api_key:
+            raise AICompletionUnavailableError("AI Seek API key is not configured")
+        model_text = getattr(settings, "ai_seek_models", "qwen/qwen-coder-32b")
+        models = [item.strip() for item in model_text.split(",") if item.strip()]
+        if not models:
+            raise AICompletionUnavailableError("AI Seek model list is empty")
+        headers = {
+            "User-Agent": "okhttp/4.12.0",
+            "Accept": "text/event-stream",
+            "Accept-Encoding": "gzip",
+            "Content-Type": "application/json",
+            "x-app-id": getattr(settings, "ai_seek_app_id", "ai-seek"),
+            "x-access-token": api_key,
+            "x-guru-internal-send-timeout-ms": "60000",
+            "x-guru-internal-connect-timeout-ms": "60000",
+            "x-guru-internal-receive-timeout-ms": "120000",
+        }
+        device_info = getattr(settings, "ai_seek_device_info", "")
+        if device_info:
+            headers["x-device-info"] = device_info
+        errors: list[str] = []
+        for model in models:
+            payload = {
+                "sessionId": str(uuid.uuid4()),
+                "userMessageId": str(uuid.uuid4()),
+                "aiMessageId": str(uuid.uuid4()),
+                "model": model,
+                "text": self._system_prompt() + "\\n\\n" + user_prompt,
+                "restrictedType": "FREE_USER",
+                "sessionType": "NORMAL",
+            }
+            answer = ""
+            try:
+                async with httpx.AsyncClient(timeout=125.0) as client:
+                    async with client.stream(
+                        "POST", getattr(settings, "ai_seek_url", "https://ai-seek.thebetter.ai/v4/chat/send"),
+                        headers=headers, json=payload,
+                    ) as response:
+                        if response.status_code in {429, 502, 503, 504}:
+                            raise AIProviderRateLimitError(
+                                f"AI Seek temporary capacity/rate-limit response {response.status_code}"
+                            )
+                        response.raise_for_status()
+                        async for line in response.aiter_lines():
+                            if not line or not line.startswith("data:"):
+                                continue
+                            raw = line[5:].strip()
+                            if not raw or raw == "[DONE]":
+                                continue
+                            try:
+                                event = json.loads(raw)
+                            except json.JSONDecodeError:
+                                continue
+                            content = event.get("content")
+                            if isinstance(content, str):
+                                answer += content
+                            elif isinstance(event.get("data"), dict) and isinstance(event["data"].get("content"), str):
+                                answer += event["data"]["content"]
+                if answer.strip():
+                    logger.info("MCQ generated via AI Seek provider/model %s", model)
+                    return self._parse_json_content(answer)
+                errors.append(f"{model}: empty completion")
+            except AIProviderRateLimitError:
+                raise
+            except (httpx.HTTPError, AIQuestionGenerationError) as exc:
+                errors.append(f"{model}: {type(exc).__name__}")
+                logger.warning("AI Seek model %s unavailable; trying next model", model)
+        raise AICompletionUnavailableError("All AI Seek models failed: " + ", ".join(errors))
+
     @staticmethod
     def _validator_prompt(question: ValidQuestion, source_context: str | None = None) -> str:
         payload = {
@@ -434,7 +568,9 @@ Validator rule: when a PDF excerpt is supplied, approve only if the correct answ
             generator_settings = getattr(self, "settings", None)
             self._request_slots = asyncio.Semaphore(int(getattr(generator_settings, "ai_max_concurrent_requests", 4)))
             self._provider_locks = {
-                provider: asyncio.Lock() for provider in ("gemini", "groq", "mistral", "openai-compatible")
+                provider: asyncio.Lock() for provider in (
+                    "gemini", "groq", "mistral", "openrouter", "cerebras", "sambanova", "ai-seek", "openai-compatible"
+                )
             }
             self._provider_cooldown_until = {}
             self._provider_next_request_at = {}
@@ -509,6 +645,10 @@ Validator rule: when a PDF excerpt is supplied, approve only if the correct answ
             ("gemini", self._request_gemini),
             ("groq", self._request_groq),
             ("mistral", self._request_mistral),
+            ("openrouter", self._request_openrouter),
+            ("cerebras", self._request_cerebras),
+            ("sambanova", self._request_sambanova),
+            ("ai-seek", self._request_ai_seek),
             ("openai-compatible", self._request_openai_compatible),
         )
         errors: list[str] = []
@@ -561,6 +701,8 @@ Validator rule: when a PDF excerpt is supplied, approve only if the correct answ
                 validator_result = await self._validate_independently(valid, source_context=source_context)
                 if validator_result is False:
                     raise QuestionValidationError("Independent validator rejected the MCQ")
+                if validator_result is None and getattr(self.settings, "validator_require_approval", True):
+                    raise QuestionValidationError("No independent validator approval available")
                 return valid
             except AICompletionUnavailableError:
                 # Retrying malformed generation can help, but a provider with no completion
@@ -578,3 +720,9 @@ Validator rule: when a PDF excerpt is supplied, approve only if the correct answ
             await self.groq_client.close()
         if self.mistral_client is not None:
             await self.mistral_client.close()
+        if self.openrouter_client is not None:
+            await self.openrouter_client.close()
+        if self.cerebras_client is not None:
+            await self.cerebras_client.close()
+        if self.sambanova_client is not None:
+            await self.sambanova_client.close()
