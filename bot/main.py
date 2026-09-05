@@ -101,8 +101,10 @@ def build_application() -> Application:
     configure_logging(
         settings.log_level,
         [
-            settings.bot_token, settings.ai_api_key, settings.news_api_key or "",
+            settings.bot_token, settings.ai_api_key or "", settings.news_api_key or "",
             settings.gemini_api_key or "", settings.groq_api_key or "", settings.mistral_api_key or "",
+            settings.openrouter_api_key or "", settings.cerebras_api_key or "", settings.sambanova_api_key or "",
+            settings.ai_seek_api_key or "",
         ],
         log_file=settings.log_file,
     )
@@ -175,7 +177,10 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("stopquiz", admin.stopquiz_command))
     application.add_handler(CommandHandler("setmode", admin.setmode_command))
     application.add_handler(CommandHandler("addquestion", admin.addquestion_command))
+    application.add_handler(CommandHandler("exportquestions", admin.exportquestions_command))
+    application.add_handler(CommandHandler("question", admin.question_command))
     application.add_handler(CommandHandler("removequestion", admin.removequestion_command))
+    application.add_handler(CommandHandler("removequestions", admin.removequestions_command))
     application.add_handler(CommandHandler("groupstats", admin.groupstats_command))
     application.add_handler(CommandHandler("botreport", admin.botreport_command))
     application.add_handler(CommandHandler("status", admin.status_command))
